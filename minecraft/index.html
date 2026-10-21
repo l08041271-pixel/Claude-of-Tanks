@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="author" content="Kevin B. Liu" />
+<meta name="copyright" content="Copyright © 2026 Kevin B. Liu" />
+<title>Minecraft 3D — tiny voxel sandbox</title>
+<style>
+  :root {
+    --ink: #eaf3f7;
+    --muted: #a9bcc7;
+    --green: #78c850;
+    --green-hot: #92e066;
+    --panel: rgba(10, 20, 28, 0.72);
+    --line: rgba(255, 255, 255, 0.14);
+    --shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+    --mono: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    background:
+      radial-gradient(120vmax 70vmax at 20% -10%, #9ad4ff 0%, transparent 55%),
+      linear-gradient(180deg, #78bdf0 0%, #b9e0f6 48%, #e7f3f8 78%, #cfe3ec 100%);
+    color: var(--ink);
+    font-family: var(--mono);
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  #app { position: fixed; inset: 0; }
+  canvas#game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  #vignette {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 52%, rgba(9, 22, 33, 0.34) 100%);
+  }
+
+  #water-tint {
+    position: absolute; inset: 0; pointer-events: none; opacity: 0;
+    background: linear-gradient(180deg, rgba(22, 78, 158, 0.52), rgba(10, 45, 104, 0.62));
+    transition: opacity 160ms ease;
+  }
+  #water-tint.on { opacity: 1; }
+
+  #crosshair {
+    position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+    transform: translate(-50%, -50%); pointer-events: none; opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  #crosshair.on { opacity: 1; }
+  #crosshair::before, #crosshair::after {
+    content: ""; position: absolute; background: #fff;
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.85);
+  }
+  #crosshair::before { left: 50%; top: 3px; width: 2px; height: 16px; transform: translateX(-50%); }
+  #crosshair::after { top: 50%; left: 3px; height: 2px; width: 16px; transform: translateY(-50%); }
+  #crosshair.target::before, #crosshair.target::after { background: #d9ffbe; }
+
+  #stats {
+    position: absolute; top: 12px; left: 14px; pointer-events: none;
+    font-size: 11px; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.78);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+    display: grid; gap: 3px;
+  }
+  #stats .fps { color: #c9ffa8; }
+
+  #hotbar-wrap {
+    position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 9px;
+    pointer-events: none; opacity: 0; transition: opacity 150ms ease;
+  }
+  #hotbar-wrap.on { opacity: 1; }
+  #block-label {
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: #fff; text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+    background: rgba(8, 16, 22, 0.45); padding: 3px 10px; border-radius: 4px;
+    transition: opacity 300ms ease;
+  }
+  #hotbar {
+    display: flex; gap: 4px; padding: 5px;
+    background: rgba(8, 16, 22, 0.55);
+    border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(8px);
+  }
+  .slot {
+    position: relative; width: 48px; height: 48px; padding: 0; cursor: pointer;
+    border: 2px solid rgba(255, 255, 255, 0.12); border-radius: 5px;
+    background: rgba(255, 255, 255, 0.06); pointer-events: auto;
+    transition: transform 90ms ease, border-color 90ms ease, background 90ms ease;
+  }
+  .slot canvas { width: 40px; height: 40px; display: block; margin: 2px auto; image-rendering: pixelated; }
+  .slot .key {
+    position: absolute; right: 3px; bottom: 1px; font-size: 9px; color: rgba(255, 255, 255, 0.55);
+    text-shadow: 0 1px 2px #000;
+  }
+  .slot:hover { border-color: rgba(255, 255, 255, 0.4); }
+  .slot.selected {
+    border-color: #ffffff; background: rgba(255, 255, 255, 0.16);
+    transform: translateY(-3px); box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
+  }
+
+  .overlay {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    padding: 24px; background: rgba(8, 18, 27, 0.38); backdrop-filter: blur(2px);
+    z-index: 10; transition: opacity 180ms ease; overflow: auto;
+  }
+  .overlay.hidden { opacity: 0; pointer-events: none; }
+  .panel {
+    width: min(560px, 100%); max-height: calc(100vh - 48px); overflow: auto;
+    padding: 34px 36px 30px; text-align: center;
+    background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 14px; box-shadow: var(--shadow);
+    backdrop-filter: blur(16px);
+  }
+  .eyebrow { margin: 0 0 12px; font-size: 10px; letter-spacing: 0.34em; color: var(--muted); text-transform: uppercase; }
+  h1 {
+    margin: 0; font-size: clamp(38px, 7vw, 58px); line-height: 0.94; letter-spacing: 0.02em;
+    font-weight: 800; color: #f7fbf5;
+    text-shadow: 0 3px 0 #3f6b33, 0 8px 22px rgba(0, 0, 0, 0.55);
+  }
+  h1 span { display: block; font-size: 0.42em; letter-spacing: 0.5em; color: var(--green-hot); margin-top: 10px; text-shadow: 0 2px 10px rgba(120, 200, 80, 0.55); }
+  .tag { margin: 18px 0 22px; color: var(--muted); font-size: 12px; line-height: 1.7; letter-spacing: 0.04em; }
+
+  button.primary, button.ghost {
+    font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: 0.16em;
+    text-transform: uppercase; cursor: pointer; border-radius: 7px; transition: transform 90ms ease, background 120ms ease, opacity 120ms ease;
+  }
+  button.primary {
+    padding: 14px 54px; color: #10230d; background: linear-gradient(180deg, var(--green-hot), var(--green));
+    border: 1px solid rgba(255, 255, 255, 0.35); box-shadow: 0 8px 24px rgba(64, 122, 44, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+  button.primary:hover:not(:disabled) { transform: translateY(-1px); background: linear-gradient(180deg, #a4f078, #85d95a); }
+  button.primary:active:not(:disabled) { transform: translateY(1px); }
+  button.primary:disabled { opacity: 0.45; cursor: progress; }
+  button.ghost {
+    padding: 10px 20px; color: var(--ink); background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+  button.ghost:hover { background: rgba(255, 255, 255, 0.14); }
+
+  #status { margin-top: 14px; min-height: 16px; font-size: 11px; letter-spacing: 0.08em; color: var(--muted); }
+  #status.ready { color: #b6f596; }
+
+  .controls {
+    display: grid; grid-template-columns: auto 1fr; gap: 7px 16px; margin: 26px auto 0;
+    max-width: 390px; text-align: left; font-size: 11px; line-height: 1.5;
+    color: var(--muted); border-top: 1px solid var(--line); padding-top: 18px;
+  }
+  .controls kbd {
+    font-family: var(--mono); font-size: 10px; color: var(--ink);
+    background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.18);
+    border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; white-space: nowrap;
+  }
+
+  .seed { margin-top: 14px; font-size: 10px; letter-spacing: 0.1em; color: rgba(255, 255, 255, 0.38); }
+  .disclaimer { margin: 22px 0 0; font-size: 9px; line-height: 1.6; letter-spacing: 0.08em; color: rgba(255, 255, 255, 0.3); }
+  .pause-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 8px; }
+  .pause-title { margin: 4px 0 6px; font-size: 32px; letter-spacing: 0.22em; font-weight: 800; }
+  .pause-copy { margin: 0 0 22px; color: var(--muted); font-size: 12px; }
+
+  @media (max-width: 560px) {
+    .panel { padding: 26px 20px 22px; }
+    .slot { width: 38px; height: 38px; }
+    .slot canvas { width: 30px; height: 30px; }
+    .controls { display: none; }
+    #stats { font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+  <div id="vignette"></div>
+  <div id="water-tint"></div>
+  <div id="crosshair"></div>
+
+  <div id="stats">
+    <div id="stat-pos">x 0  y 0  z 0</div>
+    <div id="stat-fps" class="fps">-- fps</div>
+  </div>
+
+  <div id="hotbar-wrap">
+    <div id="block-label">Grass Block</div>
+    <div id="hotbar"></div>
+  </div>
+
+  <div id="overlay" class="overlay">
+    <div class="panel">
+      <p class="eyebrow">A tiny voxel sandbox</p>
+      <h1>MINECRAFT<span>3D</span></h1>
+      <p class="tag">Rolling hills, oak trees, beaches and water.<br />Break the world apart and build it back.</p>
+      <button id="play" class="primary" disabled>Generate World</button>
+      <div id="status">Loading engine…</div>
+      <div class="controls">
+        <span><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></span><span>Move</span>
+        <span><kbd>Mouse</kbd></span><span>Look around</span>
+        <span><kbd>Space</kbd></span><span>Jump / swim up</span>
+        <span><kbd>Shift</kbd></span><span>Sprint</span>
+        <span><kbd>Left click</kbd></span><span>Break block</span>
+        <span><kbd>Right click</kbd></span><span>Place block</span>
+        <span><kbd>1</kbd>–<kbd>9</kbd> / <kbd>Wheel</kbd></span><span>Choose block</span>
+        <span><kbd>Esc</kbd></span><span>Pause</span>
+      </div>
+      <p class="disclaimer">Fan-made voxel sandbox. Best with a keyboard and mouse.<br />Not affiliated with Mojang or Microsoft.</p>
+    </div>
+  </div>
+
+  <div id="pause" class="overlay hidden">
+    <div class="panel">
+      <p class="eyebrow">World paused</p>
+      <div class="pause-title">PAUSED</div>
+      <p class="pause-copy">The hills aren't going anywhere.</p>
+      <div class="pause-actions">
+        <button id="resume" class="primary">Resume</button>
+        <button id="new-world" class="ghost">New World</button>
+      </div>
+      <div id="seed-line" class="seed"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>
